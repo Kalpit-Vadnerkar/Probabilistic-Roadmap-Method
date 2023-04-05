@@ -65,7 +65,7 @@ def build_roadmap(q_range, robot_dim, scene_obstacles):
     
     theta = 0
     # Uniformly sampled configurations
-    points = sample_positions(x_limit, y_limit, n_samples=500)
+    points = sample_positions(x_limit, y_limit, n_samples=1000)
       
     # the roadmap 
     graph = Roadmap()
@@ -80,10 +80,10 @@ def build_roadmap(q_range, robot_dim, scene_obstacles):
     vertices = graph.getVertices()
     for v in vertices:
         # Get nearest K configutation for a chosen configuration
-        nearest = k_nearest_neighbors(graph, v.getConfiguration(), K=20)
+        nearest = k_nearest_neighbors(graph, v.getConfiguration(), K=50)
         for neighbor in nearest:
             # Interpolate the two configurations 
-            path = interpolate(v.getConfiguration(), neighbor[0].getConfiguration(), stepsize = 2)
+            path = interpolate(v.getConfiguration(), neighbor[0].getConfiguration(), step_size = 1)
             # Check the path for collision 
             is_path_valid = True
             for point in path:
@@ -177,7 +177,7 @@ def collision(q):
     return False
    
 
-def interpolate (q1, q2, stepsize=1):
+def interpolate (q1, q2, step_size=1):
     """
         Returns an interpolated local path between two given configurations. 
         It can be used to determine whether an edge between vertices is collision-free. 
@@ -187,33 +187,20 @@ def interpolate (q1, q2, stepsize=1):
     x2 = q2[0]
     y2 = q2[1]
     
-    dx = abs(x2 - x1)
-    dy = abs(y2 - y1)
+    # Calculate the slope and y-intercept of the line
+    m = (y2 - y1) / (x2 - x1)
+    b = y1 - m * x1
     
-    # Determine whether the line is more horizontal or vertical
-    is_horizontal = dx >= dy
+    # Determine the number of steps to interpolate
+    num_steps = int(max(abs(x2 - x1), abs(y2 - y1)) / step_size)
     
-    # Initialize starting and ending points
-    if is_horizontal:
-        x_start, y_start = min(x1, x2), y1
-        x_end, y_end = max(x1, x2), y1
-    else:
-        x_start, y_start = x1, min(y1, y2)
-        x_end, y_end = x1, max(y1, y2)
-    
-    # Initialize list of points
-    points = [(x_start, y_start)]
-    
-    # Compute the next point on the line and add it to the list
-    if is_horizontal:
-        for x in range(x_start + stepsize, x_end + 1, stepsize):
-            y = round(y_start + dy/dx*(x - x_start))
-            points.append((x, y))
-    else:
-        for y in range(y_start + stepsize, y_end + 1, stepsize):
-            x = round(x_start + dx/dy*(y - y_start))
-            points.append((x, y))
-    
+    # Interpolate the line
+    points = []
+    for i in range(num_steps + 1):
+        x = x1 + (i * step_size * (x2 - x1) / max(abs(x2 - x1), abs(y2 - y1)))
+        y = m * x + b
+        points.append((x, y))
+        
     return points
 
 

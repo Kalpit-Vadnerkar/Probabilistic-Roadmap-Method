@@ -21,7 +21,7 @@ import copy
 class Scene(tk.Frame):
     random.seed('cpsc8810')
    
-    def __init__(self, filename, disk_robot, build_fn, master=None, resolution = 700):
+    def __init__(self, filename, disk_robot, build_fn, master=None, resolution = 500):
         super().__init__(master)
         #self.master = tk.Tk()
         self.build_fn = build_fn
