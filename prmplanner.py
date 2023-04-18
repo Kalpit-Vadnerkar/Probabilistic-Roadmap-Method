@@ -12,7 +12,7 @@ from utils import *
 import random
 import math
 
-disk_robot = True #(change this to False for part II) 
+disk_robot = False #(change this to False for part II) 
 
 
 obstacles = None # the obstacles 
@@ -32,19 +32,21 @@ robot_height = None # the height of the OBB robot (advanced extension)
 # See graph.py to get familiar with the Roadmap class  
 
 
-def sample_positions(x_range, y_range, n_samples):
+def sample_positions(x_range, y_range, z_range, n_samples):
     """
     Returns a list of N uniformly sampled positions in a rectangular box
     defined by its range of x-positions and y-positions.
     """
     x_min, x_max = x_range
     y_min, y_max = y_range
+    z_min, z_max = z_range
     
     positions = []
     for i in range(n_samples):
         x = random.uniform(x_min, x_max)
         y = random.uniform(y_min, y_max)
-        positions.append((x, y))
+        z = random.uniform(z_min, z_max)
+        positions.append((x, y, z))
     
     return positions
 
@@ -62,37 +64,33 @@ def build_roadmap(q_range, robot_dim, scene_obstacles):
     robot_width, robot_height = robot_dim[0], robot_dim[1] # the dimensions of the robot, represented as an oriented bounding box
     
     robot_radius = max(robot_width, robot_height)/2.
-    
-    theta = 0
     # Uniformly sampled configurations
-    points = sample_positions(x_limit, y_limit, n_samples=1000)
+    points = sample_positions(x_limit, y_limit, theta_limit, n_samples=1000)
       
     # the roadmap 
     graph = Roadmap()
     
-    filtered_points = []
-    for point in points:
+    for q in points:
         # configuration
-        q = (point[0], point[1], theta)
         if not collision(q):
-            filtered_points.append(point)
             graph.addVertex(q)
     vertices = graph.getVertices()
     for v in vertices:
         # Get nearest K configutation for a chosen configuration
-        nearest = k_nearest_neighbors(graph, v.getConfiguration(), K=50)
+        nearest = k_nearest_neighbors(graph, v.getConfiguration(), K=10)
         for neighbor in nearest:
-            # Interpolate the two configurations 
-            path = interpolate(v.getConfiguration(), neighbor[0].getConfiguration(), step_size = 1)
-            # Check the path for collision 
-            is_path_valid = True
-            for point in path:
-                q = (point[0], point[1], theta)
-                if collision(q):
-                    is_path_valid = False
-            # Collision-Free path found so add edge to graph.
-            if is_path_valid:
-                graph.addEdge(v, neighbor[0], neighbor[1], path) 
+            # Check if edge already exists
+            if not neighbor[0].getEdge(v.getId()):
+                # Interpolate the two configurations 
+                path = interpolate(v.getConfiguration(), neighbor[0].getConfiguration(), step_size = 1)
+                # Check the path for collision 
+                is_path_valid = True
+                for q in path:
+                    if collision(q):
+                        is_path_valid = False
+                # Collision-Free path found so add edge to graph.
+                if is_path_valid:
+                    graph.addEdge(v, neighbor[0], neighbor[1], path) 
     # uncomment this to export the roadmap to a file
     graph.saveRoadmap("prm_roadmap.txt")
     return graph
@@ -107,16 +105,66 @@ def build_roadmap(q_range, robot_dim, scene_obstacles):
 # Make sure that start and goal configurations are collision-free. Otherwise return None
     
 def find_path(q_start, q_goal, graph):
-    path  = [] 
+    final_path  = []
+    if collision(q_start) or collision(q_goal):
+        return None
+    query = [graph.addVertex(q_start), graph.addVertex(q_goal)]
+    for v in query:
+        neighbors = nearest_neighbors(graph, v.getConfiguration(), max_dist=10.0)
+        for neighbor in neighbors:
+            # Interpolate the two configurations 
+            path = interpolate(v.getConfiguration(), neighbor[0].getConfiguration(), step_size = 1)
+            # Check the path for collision 
+            is_path_valid = True
+            for point in path:
+                q = (point[0], point[1], neighbor[0].getConfiguration()[2])
+                if collision(q):
+                    is_path_valid = False
+            # Collision-Free path found so add edge to graph.
+            if is_path_valid:
+                graph.addEdge(v, neighbor[0], neighbor[1], path)
     
-     # Use the OrderedSet for your closed list
+    # Use the OrderedSet for your closed list
     closed_set = OrderedSet()
     
+    vertices = graph.getVertices()
+    parent = [None] * graph.getNrVertices()
+    
     # Use the PriorityQueue for the open list
-    open_set = PriorityQueue(order=min, f=lambda v: v.f)      
-
-   
-    return path   
+    open_set = PriorityQueue(order=min, f=lambda v: v.f)
+    h = distance(q_start, q_goal)
+    g = 0
+    f = g + h
+    open_set.put(query[0], Value(f=f,g=g))
+    while len(open_set):
+        current_node, current_val = open_set.pop()
+        if current_node.getConfiguration() == q_goal:
+            closed_set.add(current_node)
+            break
+        closed_set.add(current_node)
+        edges = current_node.getEdges()
+        for edge in edges:
+            next_g = current_val.g + edge.getDist()
+            next_h = distance(vertices[edge.getDestination()].getConfiguration(), q_goal)
+            next_f = next_g + next_h
+            if vertices[edge.getDestination()] in closed_set:
+                continue
+            if vertices[edge.getDestination()] in open_set:
+                if open_set.get(vertices[edge.getDestination()]).f <= next_f:
+                    continue
+            open_set.put(vertices[edge.getDestination()], Value(f=next_f, g=next_g))
+            parent[edge.getId()] = current_node.getId()
+            
+    while current_node.getConfiguration() != q_start:
+        parent_node = vertices[parent[current_node.getId()]]
+        path = current_node.getEdge(parent_node.getId()).getLocalPath()
+        for p in path:
+            final_path.append(p)
+        #final_path.append(parent_node.getConfiguration())
+        #final_path.append(parent_node.getEdge(current_node.getId()).getLocalPath())
+        current_node = parent_node  
+    
+    return final_path
 
 
 # ----------------------------------------
@@ -128,9 +176,13 @@ def nearest_neighbors(graph, q, max_dist=10.0):
         Returns all the nearest roadmap vertices for a given configuration q that lie within max_dist units
         You may also want to return the corresponding distances 
     """
-
-    return None, None
-
+    distances = []
+    vertices = graph.getVertices()
+    for v in vertices:
+        if v.getConfiguration() != q and distance(v.getConfiguration(), q) <= max_dist:
+            distances.append((v, distance(v.getConfiguration(), q)))
+    distances.sort(key=lambda x: x[1])
+    return distances
 
 def k_nearest_neighbors(graph, q, K=10):
     """
@@ -150,7 +202,8 @@ def distance (q1, q2):
         Returns the distance between two configurations. 
         You may want to look at the getRobotPlacement function in utils.py that returns the OBB for a given configuration  
     """
-    return math.sqrt((q1[0] - q2[0]) ** 2 + (q1[1] - q2[1]) ** 2)
+    # Euclidean distance
+    return (0.8 * math.sqrt((q1[0] - q2[0]) ** 2 + (q1[1] - q2[1]) ** 2)) + (0.2 * abs(q2[2] - q1[2]))
 
 def collision(q):
     """
@@ -184,22 +237,29 @@ def interpolate (q1, q2, step_size=1):
     """
     x1 = q1[0]
     y1 = q1[1]
+    z1 = q1[2]
     x2 = q2[0]
     y2 = q2[1]
+    z2 = q2[2]
+    
     
     # Calculate the slope and y-intercept of the line
     m = (y2 - y1) / (x2 - x1)
     b = y1 - m * x1
+    theta = 0
     
     # Determine the number of steps to interpolate
     num_steps = int(max(abs(x2 - x1), abs(y2 - y1)) / step_size)
+    if num_steps > 0:
+        theta = (z2 - z1)/num_steps
     
     # Interpolate the line
     points = []
     for i in range(num_steps + 1):
         x = x1 + (i * step_size * (x2 - x1) / max(abs(x2 - x1), abs(y2 - y1)))
         y = m * x + b
-        points.append((x, y))
+        z = z1 + (i * theta)
+        points.append((x, y, z))
         
     return points
 
